@@ -123,7 +123,7 @@ void setup(void)
 
   Serial.begin(9600);
   while( ! Serial);
-  Serial.println("Starting Up.");
+  Serial.println("\n\nStarting Up.");
   pinMode(CAN_PUSH_SLD, OUTPUT);
   pinMode(FILL_RAIL_SLD, OUTPUT);
   pinMode(PURGE_VALVE_SLD, OUTPUT);
@@ -369,8 +369,6 @@ bool calib_button(void)
 
 void calibrate(void)
 {
-  int ref;
-
   set_point = analogRead(CALIB_WIPE);
 }
 
