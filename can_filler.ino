@@ -47,9 +47,9 @@
 #define RUN                  0
 #define CALIB                1
 
-#define INITIAL_SET_POINT 230 /* Initial Target Set Point */
-#define BUTTON_COUNT      2   /* Number of Buttons */
-#define CAN_COUNT         3   /* Number of Cans filled simultaneously */
+#define INITIAL_SET_POINT    230 /* Initial Target Set Point */
+#define BUTTON_COUNT         2   /* Number of Buttons */
+#define CAN_COUNT            3   /* Number of Cans filled simultaneously */
 
 /* Process States */
 
@@ -544,7 +544,7 @@ void check_beer_sensors(void)
     ready = true;
     for(count = 0; count < CAN_COUNT; count++)
     {
-      if(digitalRead(fill_sensor[count]) == FULL)
+      if(analogRead(fill_sensor[count]) < set_point)
       {
         ready = false;
       }
@@ -555,6 +555,7 @@ void check_beer_sensors(void)
     }
 
     Serial.println("A Beer Sensor is Submerged!");
+    flash_led();
     delay(ONE_SECOND);
   }
 }
