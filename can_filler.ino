@@ -601,18 +601,13 @@ bool button(int task, bool action)
 
 void check_buttons(void)
 {
-  if(button(RUN, PRESSED))
+  int count;
+
+  for(count = 0; count < BUTTON_COUNT; count++)
   {
-    if(button_state[RUN] == RELEASED)
+    if(button(count, PRESSED))
     {
-    button_state[RUN] = PRESSED;
-    }
-  }
-  if(button(CALIB_BTN, PRESSED))
-  {
-    if(button_state[CALIB] == RELEASED)
-    {
-      button_state[CALIB] = PRESSED;
+      button_state[count] = PRESSED;
     }
   }
 }
