@@ -1,42 +1,54 @@
 #include <MsTimer2.h>
 
-/* Defines */
+/* Defnes */
 
-#define CAN_PUSH_TIME        2000 /* 2 seconds */
-#define SETTLING_TIME        2000 /* 2 seconds */
-#define MAX_FILL_TIME        6000 /* 6 seconds */
-#define PURGE_TIME           4000 /* 4 seconds */
+#define CAN_PUSH_TIME        2000  /* 2 seconds */
+#define SETTLING_TIME        2000  /* 2 seconds */
+#define MAX_FILL_TIME        10000 /* 10 seconds */
+#define PURGE_TIME           4000  /* 4 seconds */
 
 #if PURGE_TIME > MAX_FILL_TIME
 #error PURGE_TIME must be less than MAX_FILL_TIME
 #endif
 
 #define ONE_SECOND           1000 /* 1 second */
-#define FILL_RAIL_DELAY_UP   ONE_SECOND
-#define FILL_RAIL_DELAY_DOWN ONE_SECOND
+#define FILL_RAIL_DELAY_UP   1000 /* 1 second */
+#define FILL_RAIL_DELAY_DOWN 1000 /* 1 second */
 
-#define CAN_PUSH_SLD      2    /* Can Push    Solenoid */
-#define FILL_RAIL_SLD     3    /* Fill Rail   Solenoid */
-#define PURGE_VALVE_SLD   4    /* Purge Valve Solenoid */
-#define BEER_VALVE_SLD_0  5    /* Beer Valve  Solenoid */
-#define BEER_VALVE_SLD_1  6    /* Beer Valve  Solenoid */
-#define BEER_VALVE_SLD_2  7    /* Beer Valve  Solenoid */
+#define CAN_PUSH_SLD         2    /* Can Push    Solenoid */
+#define FILL_RAIL_SLD        3    /* Fill Rail   Solenoid */
+#define PURGE_VALVE_SLD      4    /* Purge Valve Solenoid */
+#define BEER_VALVE_SLD_0     5    /* Beer Valve  Solenoid */
+#define BEER_VALVE_SLD_1     6    /* Beer Valve  Solenoid */
+#define BEER_VALVE_SLD_2     7    /* Beer Valve  Solenoid */
+#define CALIB_HOT            2    /* Calibration Pot Hot  */
+#define FILL_SENSE_0         A0   /* input to detect when can is full. */
+#define FILL_SENSE_1         A1   /* input to detect when can is full. */
+#define FILL_SENSE_2         A2   /* input to detect when can is full. */
+#define CALIB_WIPE           A3   /* Calibration Pot Wiper */
 
-#define FILL_SENSE_0      A0   /* input to detect when can is full. */
-#define FILL_SENSE_1      A1   /* input to detect when can is full. */
-#define FILL_SENSE_2      A2   /* input to detect when can is full. */
-#define LED_PIN           13
+#define RUN_BTN              9    /* Run Button */
+#define CALIB_BTN            10   /* Calibration Button */
+#define RUN_LED              11   /* Run LED */
+#define CALIB_LED            12   /* Calib LED */
+#define LED_PIN              13   /* Board LED */
 
-#define RAISE             1
-#define LOWER             0
-#define OPEN              1
-#define CLOSE             0
-#define START             1
-#define STOP              0
-#define ON                1
-#define OFF               0
-#define FULL              0
-#define CANS_THIS_RUN    30   /* Number of Cans to Can */
+#define RAISE                1
+#define LOWER                0
+#define OPEN                 1
+#define CLOSE                0
+#define START                1
+#define STOP                 0
+#define ON                   1
+#define OFF                  0
+#define FULL                 0
+#define PRESSED              1
+#define RELEASED             0
+#define RUN                  0
+#define CALIB                1
+
+#define INITIAL_SET_POINT 230 /* Initial Target Set Point */
+#define BUTTON_COUNT      2   /* Number of Buttons */
 #define CAN_COUNT         3   /* Number of Cans filled simultaneously */
 
 /* Process States */
@@ -50,7 +62,8 @@ typedef enum
   OPEN_VALVES,
   MONITOR_FILLING,
   RAISE_FILL_RAIL,
-  CHECK_RUN
+  CHECK_RUN,
+  CALIBRATION
 } process_t;
 
 typedef enum
@@ -67,7 +80,8 @@ void set_timer(int millisec);
 void stop_timer(void);
 bool timer_elapsed(void);
 void process_to(process_t proc);
-bool idle(void);
+bool go_button(void);
+bool calib_button(void);
 void can_push(bool start_stop);
 void fill_rail(bool up_down);
 fill_state_t fill_progress(void);
@@ -79,12 +93,16 @@ void operate_valve(int type, bool action);
 void check_beer_sensors(void);
 void flash_led(void);
 const char * process_string(int proc);
+bool run_button(bool action);
 
 /* Variables */
 
 process_t     process;
 int           cans_processed;
+bool          button_state[BUTTON_COUNT];
 volatile bool elapsed = false;
+int           set_point = INITIAL_SET_POINT;
+
 int fill_sensor[CAN_COUNT] = {
   FILL_SENSE_0,
   FILL_SENSE_1,
@@ -104,11 +122,21 @@ void setup(void)
   int count;
 
   Serial.begin(9600);
+  while( ! Serial);
   Serial.println("Starting Up.");
   pinMode(CAN_PUSH_SLD, OUTPUT);
   pinMode(FILL_RAIL_SLD, OUTPUT);
   pinMode(PURGE_VALVE_SLD, OUTPUT);
+  pinMode(CALIB_HOT, OUTPUT);
+  pinMode(RUN_LED, OUTPUT);
+  pinMode(CALIB_LED, OUTPUT);
   pinMode(LED_PIN, OUTPUT);
+  pinMode(RUN_BTN, INPUT_PULLUP);
+  pinMode(CALIB_BTN, INPUT_PULLUP);
+
+  digitalWrite(CALIB_HOT, OFF);
+  digitalWrite(RUN_LED,   OFF);
+  digitalWrite(CALIB_LED, OFF);
 
   for(count = 0; count < CAN_COUNT; count++)
   {
@@ -116,50 +144,53 @@ void setup(void)
     pinMode(fill_sensor[count], INPUT_PULLUP);
   }
 
+  for(count = 0; count < BUTTON_COUNT; count++)
+  {
+    button_state[count] = RELEASED;
+  }
+
   flash_led();
-//  check_beer_sensors();
-//  cans_processed = 0;
-//  operate_valve(PURGE_VALVE_SLD, CLOSE);
-//  operate_all_beer_valves(CLOSE);
-//  fill_rail(RAISE);
-//  process_to(IDLE);
+  check_beer_sensors();
+  cans_processed = 0;
+  operate_valve(PURGE_VALVE_SLD, CLOSE);
+  operate_all_beer_valves(CLOSE);
+  fill_rail(RAISE);
+  process_to(IDLE);
+  delay(100);
 }
 
 /* Main Loop */
 
 void loop(void)
 {
-  for(;;)
-  {
-    int level[CAN_COUNT];
-    int calibration = 400;
+  check_buttons();
+  run_process();
+}
 
-    for(int count = 0; count < CAN_COUNT; count++)
-    {
-      level[count] = analogRead(fill_sensor[count]);
-      Serial.print("Level Is ");
-      Serial.println(level[count]);
+/* Functions */
 
-      if(level[count] < calibration)
-        Serial.println("Triggered!");
-
-      delay(100);
-    }
-    Serial.println("\n");
-      delay(100);
-  }
+void run_process(void)
+{
 
   fill_state_t fill_state;
 
   switch(process)
   {
-
   case IDLE:
-    if(idle() == false)
+    if(go_button())
     {
       set_timer(CAN_PUSH_TIME);
       can_push(START);
       process_to(CAN_PUSH);
+      digitalWrite(RUN_LED, ON);
+    }
+    else if(calib_button())
+    {
+      Serial.println("Calibrating");
+      /* Energise Calibration Circuit */
+      digitalWrite(CALIB_HOT, ON);
+      digitalWrite(CALIB_LED, ON);
+      process_to(CALIBRATION);
     }
     break;
 
@@ -204,7 +235,11 @@ void loop(void)
       break;
 
     case FILL_TIMER_EXPIRED:
-      abort_process();
+      Serial.println("  Fill Guard Timer Over-run!");
+      wait_button_release(RUN);
+      wait_button_release(CALIB);
+      digitalWrite(RUN_LED, OFF);
+      process_to(IDLE);
       break;
 
     default:
@@ -222,21 +257,35 @@ void loop(void)
   case CHECK_RUN:
     Serial.println("  Completed Cycle");
     cans_processed += CAN_COUNT;
-    if(cans_processed >= CANS_THIS_RUN)
+    Serial.print("  ");
+    Serial.print(cans_processed);
+    Serial.println("  Cans Filled.\n");
+
+    /* Check for Stop */
+    if(go_button())
     {
-      Serial.print("  Run Complete\n  ");
-      Serial.print(cans_processed);
-      Serial.println(" Processed");
-      /* Infinite loop */
-      for(;;);
+      Serial.println("  Process Halted.\n");
+      /* Ensure Calibration Button released */
+      wait_button_release(CALIB);
+      digitalWrite(RUN_LED, OFF);
+      process_to(IDLE);
     }
     else
     {
-      Serial.print("  ");
-      Serial.print(cans_processed);
-      Serial.println("  Cans Filled.\n");
+      set_timer(CAN_PUSH_TIME);
+      can_push(START);
+      process_to(CAN_PUSH);
     }
-    process_to(IDLE);
+    break;
+
+  case CALIBRATION:
+    calibrate();
+    if(calibration_exit())
+    {
+      digitalWrite(CALIB_HOT, OFF);
+      digitalWrite(CALIB_LED, OFF);
+      process_to(IDLE);
+    }
     break;
 
   default:
@@ -244,8 +293,6 @@ void loop(void)
     break;
   }
 }
-
-/* Functions */
 
 void elapse_timer_interrupt(void)
 {
@@ -287,18 +334,55 @@ void process_to(process_t proc)
   process = proc;
 }
 
-bool idle(void)
+void wait_button_release(int type)
 {
-  bool ret = true;
+  while(button(type, PRESSED));
+  (button_state[type] = RELEASED);
+  delay(50);
+}
 
-  if(cans_processed < CANS_THIS_RUN)
+bool go_button(void)
+{
+  bool ret = false;
+
+  if(button_state[RUN] == PRESSED)
   {
-    ret = false;
+    wait_button_release(RUN);
+    ret = true;
   }
-  else
+
+  return ret;
+}
+
+bool calib_button(void)
+{
+  bool ret = false;
+
+  if(button_state[CALIB] == PRESSED)
   {
-    /* Start Switch? */
+    wait_button_release(CALIB);
+    ret = true;
   }
+
+  return ret;
+}
+
+void calibrate(void)
+{
+  int ref;
+
+  set_point = analogRead(CALIB_WIPE);
+}
+
+bool calibration_exit(void)
+{
+  bool ret = false;
+  if(button_state[CALIB] == PRESSED)
+  {
+    wait_button_release(CALIB);
+    ret = true;
+  }
+
   return ret;
 }
 
@@ -401,12 +485,7 @@ bool can_full(int can_number)
   /* read the Beer Sensor */
 
   level = analogRead(fill_sensor[can_number]);
-  Serial.print("Can number ");
-  Serial.print(can_number);
-  Serial.print(", Level Is ");
-  Serial.println(level);
-
-  if(0)// != FULL)
+  if(level < set_point)
   {
     operate_valve(beer_valve[can_number], CLOSE);
     Serial.print("  Can number ");
@@ -447,12 +526,6 @@ void abort_process(void)
   operate_valve(PURGE_VALVE_SLD, CLOSE);
   fill_rail(RAISE);
   Serial.println("  Stopped!");
-
-  for(;;)
-  {
-    flash_led();
-    delay(500);
-  }
 }
 
 void operate_valve(int type, bool action)
@@ -511,7 +584,34 @@ const char * process_string(int proc)
       "OPEN_VALVES",
       "MONITOR_FILLING",
       "RAISE_FILL_RAIL",
-      "CHECK_RUN"
+      "CHECK_RUN",
+      "CALIBRATION"
     };
+
   return process_str[proc];
+}
+
+bool button(int task, bool action)
+{
+  int pin = (task == RUN) ? RUN_BTN : CALIB_BTN;
+
+  return (digitalRead(pin) != action);
+}
+
+void check_buttons(void)
+{
+  if(button(RUN, PRESSED))
+  {
+    if(button_state[RUN] == RELEASED)
+    {
+    button_state[RUN] = PRESSED;
+    }
+  }
+  if(button(CALIB_BTN, PRESSED))
+  {
+    if(button_state[CALIB] == RELEASED)
+    {
+      button_state[CALIB] = PRESSED;
+    }
+  }
 }
