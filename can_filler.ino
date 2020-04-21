@@ -1,6 +1,6 @@
 #include <MsTimer2.h>
 
-/* Defnes */
+/* Defines */
 
 #define CAN_PUSH_TIME        2000  /* 2 seconds */
 #define SETTLING_TIME        2000  /* 2 seconds */
