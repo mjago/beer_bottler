@@ -1,3 +1,1 @@
-* Firmware for a Beer Canner
-
-** Based on ideas expressed at [[https://www.youtube.com/harrybrew69][Harrybrew69's Youtube Channel]].
+* Firmware for a Beer Bottle Filler
